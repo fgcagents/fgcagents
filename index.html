@@ -1,19 +1,217 @@
 <!DOCTYPE html>
-<html lang="ca">
+<html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Geolocalització de Trens</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <style>
-        #map { height: 500px; width: 100%; }
-    </style>
+  <meta charset="UTF-8">
+  <title>Trenes en Circulación</title>
+  <style>
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-bottom: 20px;
+    }
+    th, td {
+      border: 1px solid #333;
+      padding: 8px;
+      text-align: left;
+    }
+    #timestamp, #trainCount {
+      margin-bottom: 10px;
+      font-weight: bold;
+    }
+    .matched {
+      color: green;
+      font-weight: bold;
+    }
+  </style>
 </head>
 <body>
-    <h1>Geolocalització dels Trens</h1>
-    <div id="map"></div>
-    <script src="app.js"></script>
+  <h1>Información de Trenes en Circulación</h1>
+  <div id="timestamp"></div>
+  <div id="trainCount"></div>
+  
+  <!-- Tabla de la API -->
+  <table id="trainsTable">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Lin</th>
+        <th>Dir</th>
+        <th>Origen</th>
+        <th>Desti</th>
+        <th>Tipus Unitat</th>
+        <th>Propera Parada</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- Filas se generarán dinámicamente -->
+    </tbody>
+  </table>
+  
+  <h2>Itinerarios de Trenes</h2>
+  <!-- Tabla de itinerarios -->
+  <table id="itinerariesTable">
+    <thead>
+      <tr>
+        <th>A/D</th>
+        <th>Tren</th>
+        <th>Estació</th>
+        <th>HORA</th>
+        <th>Linia</th>
+        <th>ID API</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- Filas se generarán dinámicamente -->
+    </tbody>
+  </table>
+  
+  <script>
+    const limit = 20;
+    let totalCount = 0;
+    let allResults = [];
+    let apiTimestamp;
+
+    // Función para convertir una hora (formato "HH:MM") a minutos
+    function convertirHoraAMinutos(horaStr) {
+      const [horas, minutos] = horaStr.split(':').map(Number);
+      return horas * 60 + minutos;
+    }
+
+    // Función para extraer la "propera parada" de un registro de la API
+    function extractProperaParada(apiRecord) {
+      let properaParada = '';
+      if (apiRecord.properes_parades) {
+        try {
+          const parts = apiRecord.properes_parades.split(';');
+          if (parts.length > 0) {
+            const parsed = JSON.parse(parts[0].trim());
+            properaParada = parsed.parada || '';
+          }
+        } catch (error) {
+          console.error("Error al procesar properes_parades:", error);
+        }
+      }
+      return properaParada;
+    }
+
+    // Función para crear una fila en la tabla de la API
+    function createTrainRow(item) {
+      const tr = document.createElement('tr');
+      ['id', 'lin', 'dir', 'origen', 'desti', 'tipus_unitat'].forEach(field => {
+        const td = document.createElement('td');
+        td.textContent = item[field] || '';
+        tr.appendChild(td);
+      });
+      // Extraer y mostrar la propera parada
+      const tdParada = document.createElement('td');
+      tdParada.textContent = extractProperaParada(item);
+      tr.appendChild(tdParada);
+      return tr;
+    }
+
+    // Renderiza la tabla de la API
+    function renderTrainsTable() {
+      const tableBody = document.querySelector('#trainsTable tbody');
+      allResults.forEach(item => {
+        const row = createTrainRow(item);
+        tableBody.appendChild(row);
+      });
+    }
+
+    // Función asíncrona para obtener todos los registros paginados de la API
+    async function fetchAllPages() {
+      let offset = 0;
+      do {
+        const apiUrl = `https://dadesobertes.fgc.cat/api/explore/v2.1/catalog/datasets/posicionament-dels-trens/records?limit=${limit}&offset=${offset}`;
+        try {
+          const response = await fetch(apiUrl);
+          const data = await response.json();
+          if (offset === 0 && data.total_count) {
+            totalCount = data.total_count;
+            apiTimestamp = new Date();
+            document.getElementById('timestamp').textContent = "Timestamp de acceso: " + apiTimestamp.toLocaleString();
+            document.getElementById('trainCount').textContent = "Trens Circulant: " + totalCount;
+          }
+          if (data.results && Array.isArray(data.results)) {
+            allResults = allResults.concat(data.results);
+          }
+          offset += limit;
+        } catch (error) {
+          console.error('Error al obtener los datos de la API:', error);
+          break;
+        }
+      } while (offset < totalCount);
+    }
+
+    // Función asíncrona para cargar el fichero JSON de itinerarios y emparejar los datos
+    async function cargarItinerarios() {
+      try {
+        const response = await fetch('itinerari_LA51_2_0_1_asc_desc.json');
+        const itinerarios = await response.json();
+        const itinerariesTableBody = document.querySelector('#itinerariesTable tbody');
+        const apiTimestampMinutos = convertirHoraAMinutos(apiTimestamp.toLocaleTimeString('en-GB', { hour12: false }));
+        
+        itinerarios.forEach(entry => {
+          const tr = document.createElement('tr');
+          
+          const adTd = document.createElement('td');
+          adTd.textContent = entry["A/D"] || '';
+          tr.appendChild(adTd);
+          
+          const trenTd = document.createElement('td');
+          trenTd.textContent = entry.Tren || '';
+          // Asignar un id para facilitar el marcado posterior
+          trenTd.id = `tren-${entry.Tren}`;
+          tr.appendChild(trenTd);
+          
+          const estacioTd = document.createElement('td');
+          estacioTd.textContent = entry.Estació || '';
+          tr.appendChild(estacioTd);
+          
+          const horaTd = document.createElement('td');
+          horaTd.textContent = entry.HORA || '';
+          tr.appendChild(horaTd);
+          
+          const liniaTd = document.createElement('td');
+          liniaTd.textContent = entry.Linia || '';
+          tr.appendChild(liniaTd);
+          
+          const apiIdTd = document.createElement('td');
+          apiIdTd.textContent = '';
+          tr.appendChild(apiIdTd);
+          
+          const horaItinerarioMinutos = convertirHoraAMinutos(entry.HORA);
+          // Se compara la diferencia de tiempo (hasta 3 minutos)
+          if (Math.abs(apiTimestampMinutos - horaItinerarioMinutos) <= 3) {
+            const apiMatch = allResults.find(apiRecord =>
+              entry.Linia === apiRecord.lin &&
+              entry["A/D"] === apiRecord.dir &&
+              extractProperaParada(apiRecord) === entry.Estació
+            );
+            if (apiMatch) {
+              // Se asigna la id de la API para seguimiento
+              entry.apiId = apiMatch.id;
+              apiIdTd.textContent = apiMatch.id;
+              // Marcar visualmente el nombre del tren en verde
+              trenTd.classList.add('matched');
+            }
+          }
+          
+          itinerariesTableBody.appendChild(tr);
+        });
+      } catch (error) {
+        console.error('Error al cargar el fichero de itinerarios:', error);
+      }
+    }
+
+    // Función principal que coordina la carga de datos
+    async function main() {
+      await fetchAllPages();
+      renderTrainsTable();
+      await cargarItinerarios();
+    }
+
+    document.addEventListener("DOMContentLoaded", main);
+  </script>
 </body>
 </html>
